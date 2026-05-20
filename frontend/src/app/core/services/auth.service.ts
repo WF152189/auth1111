@@ -4,18 +4,18 @@ import { Router } from '@angular/router';
 import { TokenService } from './token.service';
 import { MsalService, MsalRedirectRequest } from './msal.service';
 import { environment } from '../../../environments/environment';
-import { firstValueFrom, of } from 'rxjs';
-import { switchMap, tap, catchError, map } from 'rxjs/operators';
+import { firstValueFrom } from 'rxjs';
 
 /**
  * 認証エラー種別
  */
 export type AuthErrorCode = 
-  | 'ENTRA_JWT_INVALID'      // Entra JWT署名検証失敗
+  | 'ENTRA_TOKEN_INVALID'    // Entra JWT検証失敗（success=false）
   | 'ENTRA_JWT_EXPIRED'      // Entra JWT期限切れ
   | 'USER_NOT_FOUND'         // ユーザー未登録
   | 'INTERNAL_AUTH_FAILED'   // 内部認証失敗
   | 'INTERNAL_AUTH_DENIED'   // 内部認証拒否
+  | 'SERVER_ERROR'           // サーバーエラー
   | 'UNKNOWN';               // その他
 
 /**
@@ -25,6 +25,11 @@ export type AuthErrorCode =
  * 1. MSAL.jsでログインリダイレクト
  * 2. MSAL.jsで認可コード受信・トークン取得
  * 3. バックエンドAPIで業務JWT取得
+ * 
+ * エラー処理設計:
+ * - すべてHTTP 200で返す
+ * - 成功: { success: true, userId, email, ... }
+ * - 失敗: { success: false, message: "..." }
  */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
@@ -32,6 +37,11 @@ export class AuthService {
   private http = inject(HttpClient);
   private router = inject(Router);
   private tokenService = inject(TokenService);
+
+  // sessionStorage keys
+  private readonly RETRY_KEY = 'auth_callback_retry';
+  private readonly ENTRA_JWT_KEY = 'entra_jwt';
+  private readonly MAX_RETRY = 1;
 
   /**
    * ログイン開始
@@ -49,142 +59,229 @@ export class AuthService {
    * コールバック処理: MSALトークン取得 → 業務JWT取得
    * 
    * フロー:
-   * 1. msalInstance.handleRedirectPromise() でEntra JWT取得
-   * 2. POST /auth/verify で業務JWT取得（24時間有効）
+   * 1. handleRedirectPromise() でEntra JWT取得（初回のみ）
+   * 2. Entra JWTをsessionStorageに保存
+   * 3. POST /auth/verify で業務JWT取得
+   * 4. POST /auth/validate でsub検証
    * 
-   * リカバリーフロー:
-   * - /auth/verify が 401 を返した場合、Entra JWTが無効・期限切れ
-   * - 無限ループ防止のため、再認証は1回のみ実行
+   * リトライ設計:
+   * - リトライ時は保存されたEntra JWTを使用（handleRedirectPromise()不要）
+   * - 無限ループ防止のため、最大1回リトライ
    */
   async handleCallback(): Promise<boolean> {
-    const MAX_RETRY = 1;
-    const retryKey = 'auth_callback_retry';
-    
+    const retryKey = this.RETRY_KEY;
+    const entraJwtKey = this.ENTRA_JWT_KEY;
+    const maxRetry = this.MAX_RETRY;
+
     try {
-      // リトライカウンター確認（無限ループ防止）
+      // リトライカウンター確認
       const retryCount = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
-      if (retryCount >= MAX_RETRY) {
-        console.error('[handleCallback] リトライ上限に到達');
-        sessionStorage.removeItem(retryKey);
-        return false;
-      }
-
-      // Step 1: MSALでEntra JWT取得
-      console.log('[handleCallback] handleRedirectPromise() 開始');
-      const msalResult = await this.msalService.handleRedirectPromise();
-      console.log('[handleCallback] handleRedirectPromise() 結果:', msalResult ? '取得成功' : 'null');
       
-      if (!msalResult) {
-        console.error('[handleCallback] MSAL result is null → 認可コードなし');
+      // Entra JWT取得
+      let entraJwt: string;
+      
+      if (retryCount === 0) {
+        // 【初回】handleRedirectPromise() を使用
+        console.log('[handleCallback] 初回実行');
+        const msalResult = await this.msalService.handleRedirectPromise();
+        
+        if (!msalResult) {
+          console.error('[handleCallback] MSAL result is null');
+          return false;
+        }
+        
+        entraJwt = msalResult.idToken;
+        sessionStorage.setItem(entraJwtKey, entraJwt);
+        console.log('[handleCallback] Entra JWT保存完了');
+      } else {
+        // 【リトライ】保存された Entra JWT を使用
+        console.log('[handleCallback] リトライ実行');
+        const cachedJwt = sessionStorage.getItem(entraJwtKey);
+        
+        if (!cachedJwt) {
+          console.error('[handleCallback] 保存されたEntra JWTがない');
+          this.cleanup();
+          this.login();
+          return false;
+        }
+        
+        entraJwt = cachedJwt;
+        console.log('[handleCallback] 保存されたEntra JWTを使用');
+      }
+
+      // Step 1: /auth/verify 呼び出し
+      console.log('[handleCallback] /auth/verify呼び出し開始');
+      const verifyResult = await this.callVerifyApi(entraJwt);
+      
+      if (!verifyResult.success) {
+        // Entra検証失敗（message !== SERVER_ERROR && message !== Tokenなし）→ 終了
+        if (verifyResult.message !== 'SERVER_ERROR' && verifyResult.message !== 'Tokenなし') {
+          console.warn('[handleCallback] Entra検証失敗（終了）:', verifyResult.message);
+          this.cleanup();
+          return false;
+        }
+        
+        // サーバーエラー or Tokenなし → リトライ
+        console.warn('[handleCallback] /auth/verify失敗（リトライ）:', verifyResult.message);
+        
+        // リトライカウンター確認
+        const retryKey = this.RETRY_KEY;
+        const retryCount = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
+        
+        if (retryCount >= this.MAX_RETRY) {
+          console.error('[handleCallback] リトライ上限到達');
+          this.cleanup();
+          return false;
+        }
+        
+        // リトライカウンター増分
+        sessionStorage.setItem(retryKey, String(retryCount + 1));
+        
+        // 保存されたEntra JWTでhandleCallbackを再呼び出し
+        return this.handleCallback();
+      }
+
+      // Step 2: /auth/validate 呼び出し
+      console.log('[handleCallback] /auth/validate呼び出し開始');
+      const validateResult = await this.callValidateApi();
+      
+      if (validateResult === 'success') {
+        console.log('[handleCallback] 全認証フロー完了: 成功');
+        this.cleanup();
+        return true;
+      } else if (validateResult === 'retry') {
+        // 401 or 5xx → リトライ
+        console.warn('[handleCallback] /auth/validate失敗（リトライ）');
+        
+        // リトライカウンター確認
+        const retryKey = this.RETRY_KEY;
+        const retryCount = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
+        
+        if (retryCount >= this.MAX_RETRY) {
+          console.error('[handleCallback] リトライ上限到達');
+          this.cleanup();
+          return false;
+        }
+        
+        // リトライカウンター増分
+        sessionStorage.setItem(retryKey, String(retryCount + 1));
+        
+        // 保存されたEntra JWTでhandleCallbackを再呼び出し
+        return this.handleCallback();
+      } else {
+        // sub検証失敗 or その他エラー
+        console.warn('[handleCallback] 認証フロー失敗');
+        this.cleanup();
         return false;
       }
 
-      const entraJwt = msalResult.idToken;
-      console.log('[handleCallback] ID Token取得済み、/auth/verify にリクエスト送信');
-
-      // Step 2: Entra JWT → 業務JWT（24時間有効）→ 追加の検証API呼び出し
-      try {
-        await firstValueFrom(
-          this.http.post(`${environment.apiBaseUrl}/auth/verify`, {}, {
-            headers: { 'Authorization': `Bearer ${entraJwt}` },
-            withCredentials: true,
-            observe: 'response'  // レスポンス全体（ヘッダー含む）を取得
-          }).pipe(
-            // /auth/verify のレスポンスからトークンを抽出
-            tap(authRes => {
-              const authHeader = authRes.headers.get('Authorization');
-              if (!authHeader || !authHeader.startsWith('Bearer ')) {
-                throw new Error('Authorizationヘッダーなし');
-              }
-              
-              const token = authHeader.substring(7);  // "Bearer " を除去
-              // 業務JWTをLocalStorageに保存（24時間有効）
-              this.tokenService.saveToken(token);
-              console.log('[handleCallback] 業務JWT保存完了');
-            }),
-            // 成功後、追加の検証APIを呼び出し
-            switchMap(() => {
-              console.log('[handleCallback] 追加検証API呼び出し開始');
-              // TODO: ここに実際の検証APIのURLを入れてください
-              return this.http.post(`${environment.apiBaseUrl}/auth/validate`, {}, {
-                withCredentials: true
-              });
-            }),
-            // 追加検証APIの結果を処理
-            tap(validateRes => {
-              console.log('[handleCallback] 追加検証API成功:', validateRes);
-              // 必要に応じて検証結果を処理
-            }),
-            // エラー処理
-            catchError((error: HttpErrorResponse) => {
-              console.error('[handleCallback] API呼び出しエラー:', error);
-              
-              // HTTP 401エラー時のリカバリーフロー
-              if (error.status === 401) {
-                const errorCode = this.extractErrorCode(error);
-                console.warn('[handleCallback] APIが401:', errorCode);
-                
-                // リトライカウンター増分
-                const retryCount = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
-                sessionStorage.setItem(retryKey, String(retryCount + 1));
-                
-                // エラー理由を記録（ユーザー表示用）
-                sessionStorage.setItem('auth_error_reason', errorCode);
-                
-                // MSALアカウント情報クリア（無効なトークンを削除）
-                this.msalService.logoutRedirect();
-                
-                // 即時Entra ID再認証へリダイレクト
-                this.login();
-                
-                // エラーを投げてストリームを終了
-                return of(false);
-              }
-              
-              // 401以外は通常のエラーとして処理
-              throw error;
-            })
-          )
-        );
-        
-        console.log('[handleCallback] 全認証フロー完了 → true返却');
-        // 成功したらリトライカウンターリセット
-        sessionStorage.removeItem(retryKey);
-        return true;
-        
-      } catch (httpError) {
-        // catchError で処理されなかったエラー
-        console.error('[handleCallback] 認証フローで予期せぬエラー:', httpError);
-        throw httpError;
-      }
-    } catch (error) {
-      console.error('[handleCallback] 認証失敗:', error);
-      sessionStorage.removeItem('auth_callback_retry');
+    } catch (err: any) {
+      console.error('[handleCallback] エラー発生:', err);
+      this.cleanup();
       return false;
     }
   }
 
   /**
-   * HTTPエラーからエラーコードを抽出
+   * /auth/verify API呼び出し
    */
-  private extractErrorCode(error: HttpErrorResponse): AuthErrorCode {
-    if (error.error && error.error.code) {
-      return error.error.code as AuthErrorCode;
+  private async callVerifyApi(entraJwt: string): Promise<{
+    success: boolean;
+    message?: string;
+  }> {
+    try {
+      // Authorization headerからトークンを取得するために observe: 'response' を使用
+      const response = await firstValueFrom(
+        this.http.post<any>(`${environment.apiBaseUrl}/auth/verify`, {}, {
+          headers: { 'Authorization': `Bearer ${entraJwt}` },
+          withCredentials: true,
+          observe: 'response'  // header-access用
+        })
+      );
+
+      // success フィールドで成否を判定
+      if (response && response.body && response.body.success) {
+        // 業務JWTをheaderから抽出して保存
+        const authHeader = response.headers.get('Authorization');
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          const token = authHeader.substring(7);
+          this.tokenService.saveToken(token);
+          console.log('[callVerifyApi] 業務JWT保存完了');
+        } else {
+          console.warn('[callVerifyApi] Authorization headerなし');
+          return { success: false, message: 'Tokenなし' };
+        }
+        
+        console.log('[callVerifyApi] /auth/verify成功');
+        return { success: true };
+      } else {
+        // 失敗
+        console.warn('[callVerifyApi] /auth/verify失敗:', response?.body?.message);
+        return { success: false, message: response?.body?.message };
+      }
+
+    } catch (error) {
+      const httpError = error as HttpErrorResponse;
+      
+      // ネットワークエラー or 5xx
+      if (httpError.status === 0 || httpError.status >= 500) {
+        console.error('[callVerifyApi] サーバーエラー or 通信エラー:', httpError.status);
+        return { success: false, message: 'SERVER_ERROR' };
+      }
+      
+      // その他エラー
+      console.error('[callVerifyApi] 予期せぬエラー:', httpError);
+      return { success: false, message: 'UNKNOWN' };
     }
-    
-    // エラーメッセージから推測
-    const message = error.message?.toLowerCase() || '';
-    if (message.includes('signature') || message.includes('invalid')) {
-      return 'ENTRA_JWT_INVALID';
+  }
+
+  /**
+   * /auth/validate API呼び出し
+   */
+  private async callValidateApi(): Promise<'success' | 'fail' | 'retry'> {
+    try {
+      const response = await firstValueFrom(
+        this.http.post<any>(`${environment.apiBaseUrl}/auth/validate`, {}, {
+          withCredentials: true
+        })
+      );
+
+      // success フィールドで成否を判定
+      if (response && response.success) {
+        console.log('[callValidateApi] sub検証成功');
+        return 'success';
+      } else {
+        console.warn('[callValidateApi] sub検証失敗:', response?.message);
+        return 'fail';
+      }
+
+    } catch (error) {
+      const httpError = error as HttpErrorResponse;
+      
+      // 業務JWT無効（401）→ リトライ
+      if (httpError.status === 401) {
+        console.warn('[callValidateApi] 業務JWT無効（401）→ リトライ');
+        return 'retry';
+      }
+      
+      // サーバーエラー → リトライ
+      if (httpError.status >= 500) {
+        console.warn('[callValidateApi] サーバーエラー → リトライ');
+        return 'retry';
+      }
+      
+      // その他エラー → 終了
+      console.error('[callValidateApi] 予期せぬエラー:', httpError);
+      return 'fail';
     }
-    if (message.includes('expir')) {
-      return 'ENTRA_JWT_EXPIRED';
-    }
-    if (message.includes('user') || message.includes('not found')) {
-      return 'USER_NOT_FOUND';
-    }
-    
-    return 'UNKNOWN';
+  }
+
+  /**
+   * sessionStorageのクリーンアップ
+   */
+  private cleanup(): void {
+    sessionStorage.removeItem(this.RETRY_KEY);
+    sessionStorage.removeItem(this.ENTRA_JWT_KEY);
   }
 
   /**
@@ -192,25 +289,18 @@ export class AuthService {
    */
   async logout(): Promise<void> {
     try {
-      // バックエンドのセッションクリア（オプション）
       await firstValueFrom(
         this.http.post(`${environment.apiBaseUrl}/auth/logout`, {}, {
           withCredentials: true
         })
-      ).catch(() => {
-        // エラーは無視
-      });
+      ).catch(() => {});
     } catch (error) {
       console.error('ログアウトエラー:', error);
     }
 
-    // MSALアカウント情報クリア
+    this.cleanup();
     this.msalService.logoutRedirect();
-    
-    // ローカルトークン削除
     this.tokenService.removeToken();
-    
-    // ログアウトページへ遷移
     this.router.navigate(['/logout']);
   }
 

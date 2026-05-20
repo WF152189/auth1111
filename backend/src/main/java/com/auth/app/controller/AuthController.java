@@ -14,6 +14,14 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
 
+/**
+ * 認証コントローラー
+ * 
+ * 設計方針:
+ * - 常にHTTP 200を返す
+ * - 業務エラーはbodyのsuccess=falseで表現
+ * - Entra検証失敗、サーバーエラーに関係なく200を返す
+ */
 @RestController
 @RequestMapping("/auth")
 @RequiredArgsConstructor
@@ -27,33 +35,49 @@ public class AuthController {
 
     /**
      * POST /auth/verify
-     * Entra JWT検証 → 業務JWT + RT発行
+     * Entra JWT検証 → 業務JWT発行
+     * 
+     * 設計:
+     * - 成功: 200 + { success: true, userId, email, ... }
+     * - 失敗: 200 + { success: false, message: "..." }
      */
     @PostMapping("/verify")
     public ResponseEntity<AuthResponse> verify(
             @RequestHeader("Authorization") String authHeader,
             HttpServletResponse response) {
 
-        String entraJwt = extractBearerToken(authHeader);
-        AuthResponse authResponse = authenticationService.verifyAndIssueTokens(entraJwt);
+        try {
+            String entraJwt = extractBearerToken(authHeader);
+            AuthResponse authResponse = authenticationService.verifyAndIssueTokens(entraJwt);
 
-        // RT発行・Cookie設定
-        String rawRt = refreshTokenService.createRefreshToken(authResponse.getUserId());
-        addRefreshTokenCookie(response, rawRt);
+            // RT発行・Cookie設定
+            String rawRt = refreshTokenService.createRefreshToken(authResponse.getUserId());
+            addRefreshTokenCookie(response, rawRt);
 
-        // アクセストークンをレスポンスヘッダーに設定
-        response.addHeader("Authorization", "Bearer " + authResponse.getToken());
+            // アクセストークンをレスポンスヘッダーに設定
+            response.addHeader("Authorization", "Bearer " + authResponse.getToken());
 
-        log.info("認証・JWT発行完了: userId={}", authResponse.getUserId());
-        
-        // トークン情報を除いたレスポンスを返す
-        return ResponseEntity.ok(AuthResponse.builder()
-                .userId(authResponse.getUserId())
-                .email(authResponse.getEmail())
-                .displayName(authResponse.getDisplayName())
-                .roles(authResponse.getRoles())
-                .permissions(authResponse.getPermissions())
-                .build());
+            log.info("認証・JWT発行完了: userId={}", authResponse.getUserId());
+            
+            // 成功レスポンスを返す
+            return ResponseEntity.ok(AuthResponse.success(
+                    authResponse.getUserId(),
+                    authResponse.getEmail(),
+                    authResponse.getDisplayName(),
+                    authResponse.getRoles(),
+                    authResponse.getPermissions()
+            ));
+            
+        } catch (AuthException e) {
+            // Entra検証失敗は200で返す
+            log.warn("Entra JWT検証失敗: {}", e.getMessage());
+            return ResponseEntity.ok(AuthResponse.failure(e.getMessage()));
+            
+        } catch (Exception e) {
+            // サーバーエラーも200で返す
+            log.error("予期せぬエラー: {}", e.getMessage(), e);
+            return ResponseEntity.ok(AuthResponse.failure("サーバーエラー"));
+        }
     }
 
     /**
@@ -67,28 +91,37 @@ public class AuthController {
 
         String oldRawRt = extractRefreshTokenFromCookie(request);
         if (oldRawRt == null) {
-            throw AuthException.rtExpired();
+            return ResponseEntity.ok(AuthResponse.failure("RefreshTokenがありません"));
         }
 
-        AuthResponse authResponse = authenticationService.refreshTokens(oldRawRt);
+        try {
+            AuthResponse authResponse = authenticationService.refreshTokens(oldRawRt);
 
-        // RTローテーション
-        String newRawRt = refreshTokenService.rotateRefreshToken(oldRawRt, authResponse.getUserId());
-        addRefreshTokenCookie(response, newRawRt);
+            // RTローテーション
+            String newRawRt = refreshTokenService.rotateRefreshToken(oldRawRt, authResponse.getUserId());
+            addRefreshTokenCookie(response, newRawRt);
 
-        // アクセストークンをレスポンスヘッダーに設定
-        response.addHeader("Authorization", "Bearer " + authResponse.getToken());
+            // アクセストークンをレスポンスヘッダーに設定
+            response.addHeader("Authorization", "Bearer " + authResponse.getToken());
 
-        log.info("トークン更新完了: userId={}", authResponse.getUserId());
-        
-        // トークン情報を除いたレスポンスを返す
-        return ResponseEntity.ok(AuthResponse.builder()
-                .userId(authResponse.getUserId())
-                .email(authResponse.getEmail())
-                .displayName(authResponse.getDisplayName())
-                .roles(authResponse.getRoles())
-                .permissions(authResponse.getPermissions())
-                .build());
+            log.info("トークン更新完了: userId={}", authResponse.getUserId());
+            
+            return ResponseEntity.ok(AuthResponse.success(
+                    authResponse.getUserId(),
+                    authResponse.getEmail(),
+                    authResponse.getDisplayName(),
+                    authResponse.getRoles(),
+                    authResponse.getPermissions()
+            ));
+            
+        } catch (AuthException e) {
+            log.warn("RefreshToken検証失敗: {}", e.getMessage());
+            return ResponseEntity.ok(AuthResponse.failure(e.getMessage()));
+            
+        } catch (Exception e) {
+            log.error("予期せぬエラー: {}", e.getMessage(), e);
+            return ResponseEntity.ok(AuthResponse.failure("サーバーエラー"));
+        }
     }
 
     /**

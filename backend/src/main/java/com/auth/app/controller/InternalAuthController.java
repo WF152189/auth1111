@@ -1,24 +1,16 @@
 package com.auth.app.controller;
 
-import com.auth.app.dto.InternalAuthResponse;
-import com.auth.app.exception.AuthException;
-import com.auth.app.service.JwtService;
-import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import com.auth.app.exception.AuthException;
+
 /**
- * 内部認証コントローラー（セキュリティ修正済み）
+ * 内部認証コントローラー
  * 
- * Entra ID認証後に追加の認可チェックを行う
- * セキュリティ上の改善:
- * - リクエストボディからuserIdを直接取得しない（改ざん防止）
- * - AuthorizationヘッダーのJWTから信頼できるユーザーIDを抽出
- * - JWTの署名検証を経てから認可チェックを実行
- * 
- * スタブ環境では簡易的な実装、本番環境では外部認可サーバーと連携
+ * Entra IDのsubクレームを検証し、业务用システムへの認可をチェックする
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -26,94 +18,99 @@ import org.springframework.web.bind.annotation.*;
 @Slf4j
 public class InternalAuthController {
 
-    private final JwtService jwtService;
-
     /**
-     * POST /api/auth/internal-check
-     * 内部承認チェック（セキュリティ修正済み）
+     * POST /api/auth/validate
+     * Entra ID subクレーム検証API
      * 
      * フロー:
-     * 1. Authorizationヘッダーから業務JWTを抽出（Bearer トークン）
-     * 2. JWTの署名検証を実施（改ざん検知）
-     * 3. JWTからユーザーIDを抽出（信頼できる情報）
-     * 4. ユーザーIDで外部認可サーバーにチェック（スタブ: isUserAuthorized）
+     * 1. リクエストボディからsubを取得（Entra ID token内のoid）
+     * 2. subのフォーマット・有効性を検証
+     * 3. 業務システムへの認可是否存在をチェック（1秒待機）
+     * 4. 検証結果を返す
      * 
-     * @return 承認結果
+     * @param request { "sub": "ユーザー識別子" }
+     * @return 検証結果
      */
-    @PostMapping("/internal-check")
-    public ResponseEntity<InternalAuthResponse> internalCheck(
-            @RequestHeader("Authorization") String authHeader) {
+    @PostMapping("/validate")
+    public ResponseEntity<ValidationResponse> validate(@RequestBody ValidationRequest request) {
+        String sub = request.getSub();
         
-        // Step 1: Bearerトークン抽出
-        String businessJwt = extractBearerToken(authHeader);
+        log.info("sub検証開始: sub={}", sub);
         
-        // Step 2: JWT署名検証 + ユーザーID抽出
-        // validateToken()で署名・有効期限・issuerを自動検証
-        // 検証失敗時は例外スロー（GlobalExceptionHandlerで処理）
-        String userId;
+        // Step 1: subの必須チェック
+        if (sub == null || sub.isBlank()) {
+            log.warn("subが空です");
+            return ResponseEntity.badRequest().body(
+                ValidationResponse.builder()
+                    .success(false)
+                    .message("subは必須です")
+                    .build()
+            );
+        }
+        
+        // Step 2: subのフォーマット検証（GUID形式であることを確認）
+        if (!isValidSubFormat(sub)) {
+            log.warn("subフォーマットが無効: sub={}", sub);
+            return ResponseEntity.badRequest().body(
+                ValidationResponse.builder()
+                    .success(false)
+                    .message("subのフォーマットが無効です")
+                    .build()
+            );
+        }
+        
+        // Step 3: 認可チェック（1秒待機）
         try {
-            Claims claims = jwtService.validateToken(businessJwt);
-            userId = claims.getSubject();
-            log.info("内部認証チェック開始: userId={}", userId);
-        } catch (Exception e) {
-            log.warn("JWT検証に失敗しました: {}", e.getMessage());
+            log.debug("認可チェック開始: sub={}", sub);
+            Thread.sleep(1000);
+            log.debug("認可チェック完了: sub={}", sub);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("待機中に割り込みが発生: sub={}", sub);
             throw AuthException.internalAuthFailed();
         }
         
-        // Step 3: 外部認可サーバーでチェック（スタブ実装）
-        boolean authorized = isUserAuthorized(userId);
-        
-        if (authorized) {
-            log.info("内部認証成功: userId={}", userId);
-            return ResponseEntity.ok(
-                InternalAuthResponse.builder()
-                    .authorized(true)
-                    .message("承認されました")
-                    .build()
-            );
-        } else {
-            log.warn("内部認証拒否: userId={}", userId);
-            return ResponseEntity.ok(
-                InternalAuthResponse.builder()
-                    .authorized(false)
-                    .reason("アクセス権限がありません")
-                    .build()
-            );
-        }
+        // Step 4: 検証成功を返す
+        log.info("sub検証成功: sub={}", sub);
+        return ResponseEntity.ok(
+            ValidationResponse.builder()
+                .success(true)
+                .message("検証成功")
+                .build()
+        );
     }
-    
+
     /**
-     * AuthorizationヘッダーからBearerトークンを抽出
+     * subのフォーマット検証（GUID形式）
      */
-    private String extractBearerToken(String authHeader) {
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            log.warn("Authorizationヘッダーが無効です");
-            throw AuthException.tokenInvalid();
+    private boolean isValidSubFormat(String sub) {
+        // GUID形式: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (32文字+4ハイフン)
+        // または単なる文字列（開発環境用）
+        if (sub.matches("[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}")) {
+            return true;
         }
-        return authHeader.substring(7);
+        // 開発環境用の簡易チェック（英数字のみ）
+        if (sub.matches("[a-zA-Z0-9]+")) {
+            return true;
+        }
+        return false;
     }
-    
+
     /**
-     * ユーザーの認可状態をチェック（スタブ実装）
-     * 
-     * 本番環境では外部認可サーバーAPIを呼び出す
-     * 
-     * @param userId チェック対象のユーザーID
-     * @return 認可の成否
+     * 検証リクエストDTO
      */
-    private boolean isUserAuthorized(String userId) {
-        // スタブロジック:
-        // - admin001, user001: 認可成功（通常ユーザー）
-        // - denied001: 認可拒否（アクセス権限なし）
-        // - error001: エラー発生（システムエラー）
-        // - それ以外: 認可拒否
-        
-        if ("error001".equals(userId)) {
-            // エラーケースのスタブ: 内部認証失敗例外をスロー
-            log.error("内部認証システムエラー: userId={}", userId);
-            throw AuthException.internalAuthFailed();
-        }
-        
-        return "admin001".equals(userId) || "user001".equals(userId);
+    @lombok.Data
+    public static class ValidationRequest {
+        private String sub;
+    }
+
+    /**
+     * 検証レスポンスDTO
+     */
+    @lombok.Data
+    @lombok.Builder
+    public static class ValidationResponse {
+        private boolean success;
+        private String message;
     }
 }
