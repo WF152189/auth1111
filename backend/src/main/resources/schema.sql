@@ -34,16 +34,6 @@ CREATE TABLE role_permissions (
     FOREIGN KEY (role_id) REFERENCES roles(role_id)
 );
 
-CREATE TABLE refresh_tokens (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    token_hash VARCHAR(255) NOT NULL UNIQUE,
-    user_id VARCHAR(255) NOT NULL,
-    expires_at TIMESTAMP NOT NULL,
-    is_revoked BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
-);
-
 CREATE TABLE stub_auth_codes (
     code VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,

@@ -5,14 +5,12 @@ import com.auth.app.model.User;
 import com.auth.app.repository.StubAuthCodeRepository;
 import com.auth.app.repository.UserRepository;
 import com.auth.app.service.JwtService;
-import com.auth.app.service.RefreshTokenService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,7 +22,6 @@ public class StubEntraService {
     private final StubAuthCodeRepository authCodeRepository;
     private final UserRepository userRepository;
     private final JwtService jwtService;
-    private final RefreshTokenService refreshTokenService;
 
     @Value("${stub.entra.issuer}")
     private String entraIssuer;
@@ -52,10 +49,10 @@ public class StubEntraService {
     }
 
     /**
-     * 認可コードを検証し、Entra JWTとリフレッシュトークンを生成して返す
-     * @return Map<String, String> {"entraJwt": "...", "refreshToken": "..."}
+     * 認可コードを検証し、Entra JWTを生成して返す
+     * @return String entraJwt
      */
-    public Map<String, String> exchangeCodeForEntraJwt(String code) {
+    public String exchangeCodeForEntraJwt(String code) {
         Optional<StubAuthCode> authCodeOpt = authCodeRepository.findById(code);
         if (authCodeOpt.isEmpty()) {
             throw new RuntimeException("無効な認可コードです");
@@ -83,13 +80,7 @@ public class StubEntraService {
                 clientId
         );
 
-        // リフレッシュトークン生成
-        String refreshToken = refreshTokenService.createRefreshToken(user.getUserId());
-
-        log.info("スタブEntra JWT発行: userId={}, RT発行済み", user.getUserId());
-        return Map.of(
-                "entraJwt", entraJwt,
-                "refreshToken", refreshToken
-        );
+        log.info("スタブEntra JWT発行: userId={}", user.getUserId());
+        return entraJwt;
     }
 }

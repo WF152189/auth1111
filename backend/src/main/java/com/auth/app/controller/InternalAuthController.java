@@ -13,65 +13,65 @@ import com.auth.app.exception.AuthException;
  * Entra IDのsubクレームを検証し、业务用システムへの認可をチェックする
  */
 @RestController
-@RequestMapping("/api/auth")
+@RequestMapping("/auth")
 @RequiredArgsConstructor
 @Slf4j
 public class InternalAuthController {
 
     /**
-     * POST /api/auth/validate
+     * POST /auth/validate
      * Entra ID subクレーム検証API
      * 
      * フロー:
-     * 1. リクエストボディからsubを取得（Entra ID token内のoid）
-     * 2. subのフォーマット・有効性を検証
+     * 1. リクエストボディからuserIdを取得（Entra ID token内のsub/oid）
+     * 2. userIdのフォーマット・有効性を検証
      * 3. 業務システムへの認可是否存在をチェック（1秒待機）
      * 4. 検証結果を返す
      * 
-     * @param request { "sub": "ユーザー識別子" }
+     * @param request { "userId": "ユーザー識別子" }
      * @return 検証結果
      */
     @PostMapping("/validate")
     public ResponseEntity<ValidationResponse> validate(@RequestBody ValidationRequest request) {
-        String sub = request.getSub();
+        String userId = request.getUserId();
         
-        log.info("sub検証開始: sub={}", sub);
+        log.info("sub検証開始: userId={}", userId);
         
-        // Step 1: subの必須チェック
-        if (sub == null || sub.isBlank()) {
-            log.warn("subが空です");
+        // Step 1: userIdの必須チェック
+        if (userId == null || userId.isBlank()) {
+            log.warn("userIdが空です");
             return ResponseEntity.badRequest().body(
                 ValidationResponse.builder()
                     .success(false)
-                    .message("subは必須です")
+                    .message("userIdは必須です")
                     .build()
             );
         }
         
-        // Step 2: subのフォーマット検証（GUID形式であることを確認）
-        if (!isValidSubFormat(sub)) {
-            log.warn("subフォーマットが無効: sub={}", sub);
+        // Step 2: userIdのフォーマット検証（GUID形式であることを確認）
+        if (!isValidSubFormat(userId)) {
+            log.warn("userIdフォーマットが無効: userId={}", userId);
             return ResponseEntity.badRequest().body(
                 ValidationResponse.builder()
                     .success(false)
-                    .message("subのフォーマットが無効です")
+                    .message("userIdのフォーマットが無効です")
                     .build()
             );
         }
         
         // Step 3: 認可チェック（1秒待機）
         try {
-            log.debug("認可チェック開始: sub={}", sub);
+            log.debug("認可チェック開始: userId={}", userId);
             Thread.sleep(1000);
-            log.debug("認可チェック完了: sub={}", sub);
+            log.debug("認可チェック完了: userId={}", userId);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("待機中に割り込みが発生: sub={}", sub);
+            log.error("待機中に割り込みが発生: userId={}", userId);
             throw AuthException.internalAuthFailed();
         }
         
         // Step 4: 検証成功を返す
-        log.info("sub検証成功: sub={}", sub);
+        log.info("sub検証成功: userId={}", userId);
         return ResponseEntity.ok(
             ValidationResponse.builder()
                 .success(true)
@@ -101,7 +101,7 @@ public class InternalAuthController {
      */
     @lombok.Data
     public static class ValidationRequest {
-        private String sub;
+        private String userId;
     }
 
     /**

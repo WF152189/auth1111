@@ -71,7 +71,6 @@ export class AuthService {
   async handleCallback(): Promise<boolean> {
     const retryKey = this.RETRY_KEY;
     const entraJwtKey = this.ENTRA_JWT_KEY;
-    const maxRetry = this.MAX_RETRY;
 
     try {
       // リトライカウンター確認
@@ -109,71 +108,8 @@ export class AuthService {
         console.log('[handleCallback] 保存されたEntra JWTを使用');
       }
 
-      // Step 1: /auth/verify 呼び出し
-      console.log('[handleCallback] /auth/verify呼び出し開始');
-      const verifyResult = await this.callVerifyApi(entraJwt);
-      
-      if (!verifyResult.success) {
-        // Entra検証失敗（message !== SERVER_ERROR && message !== Tokenなし）→ 終了
-        if (verifyResult.message !== 'SERVER_ERROR' && verifyResult.message !== 'Tokenなし') {
-          console.warn('[handleCallback] Entra検証失敗（終了）:', verifyResult.message);
-          this.cleanup();
-          return false;
-        }
-        
-        // サーバーエラー or Tokenなし → リトライ
-        console.warn('[handleCallback] /auth/verify失敗（リトライ）:', verifyResult.message);
-        
-        // リトライカウンター確認
-        const retryKey = this.RETRY_KEY;
-        const retryCount = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
-        
-        if (retryCount >= this.MAX_RETRY) {
-          console.error('[handleCallback] リトライ上限到達');
-          this.cleanup();
-          return false;
-        }
-        
-        // リトライカウンター増分
-        sessionStorage.setItem(retryKey, String(retryCount + 1));
-        
-        // 保存されたEntra JWTでhandleCallbackを再呼び出し
-        return this.handleCallback();
-      }
-
-      // Step 2: /auth/validate 呼び出し
-      console.log('[handleCallback] /auth/validate呼び出し開始');
-      const validateResult = await this.callValidateApi();
-      
-      if (validateResult === 'success') {
-        console.log('[handleCallback] 全認証フロー完了: 成功');
-        this.cleanup();
-        return true;
-      } else if (validateResult === 'retry') {
-        // 401 or 5xx → リトライ
-        console.warn('[handleCallback] /auth/validate失敗（リトライ）');
-        
-        // リトライカウンター確認
-        const retryKey = this.RETRY_KEY;
-        const retryCount = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
-        
-        if (retryCount >= this.MAX_RETRY) {
-          console.error('[handleCallback] リトライ上限到達');
-          this.cleanup();
-          return false;
-        }
-        
-        // リトライカウンター増分
-        sessionStorage.setItem(retryKey, String(retryCount + 1));
-        
-        // 保存されたEntra JWTでhandleCallbackを再呼び出し
-        return this.handleCallback();
-      } else {
-        // sub検証失敗 or その他エラー
-        console.warn('[handleCallback] 認証フロー失敗');
-        this.cleanup();
-        return false;
-      }
+      // 共通認証フロー実行
+      return await this.runAuthFlow(entraJwt);
 
     } catch (err: any) {
       console.error('[handleCallback] エラー発生:', err);
@@ -183,11 +119,106 @@ export class AuthService {
   }
 
   /**
+   * サイレント更新用: Entra JWTを直接受け取り業務JWTを更新
+   * 
+   * フロー:
+   * 1. acquireTokenSilent() で取得したEntra JWTを使用
+   * 2. POST /auth/verify で業務JWT取得
+   * 3. POST /auth/validate でsub検証
+   * 
+   * リトライ設計:
+   * - handleCallback() と同一のリトライロジック
+   * - 最大1回リトライ
+   */
+  async handleCallbackWithEntraJwt(entraJwt: string): Promise<boolean> {
+    try {
+      console.log('[handleCallbackWithEntraJwt] サイレント更新開始');
+      
+      // 共通認証フロー実行
+      return await this.runAuthFlow(entraJwt);
+
+    } catch (err: any) {
+      console.error('[handleCallbackWithEntraJwt] エラー発生:', err);
+      this.cleanup();
+      return false;
+    }
+  }
+
+  /**
+   * 共通認証フロー（verify → validate）
+   * 
+   * @param entraJwt - Entra ID JWT
+   * @returns 認証成否
+   */
+  private async runAuthFlow(entraJwt: string): Promise<boolean> {
+    // Step 1: /auth/verify 呼び出し
+    console.log('[runAuthFlow] /auth/verify呼び出し開始');
+    const verifyResult = await this.callVerifyApi(entraJwt);
+    
+    if (!verifyResult.success) {
+      // Entra検証失敗（message !== SERVER_ERROR && message !== Tokenなし）→ 終了
+      if (verifyResult.message !== 'SERVER_ERROR' && verifyResult.message !== 'Tokenなし') {
+        console.warn('[runAuthFlow] Entra検証失敗（終了）:', verifyResult.message);
+        this.cleanup();
+        return false;
+      }
+      
+      // サーバーエラー or Tokenなし → リトライ
+      console.warn('[runAuthFlow] /auth/verify失敗（リトライ）:', verifyResult.message);
+      return this.retryAuthFlow(() => this.runAuthFlow(entraJwt));
+    }
+
+    // Step 2: /auth/validate 呼び出し（userIdを渡す）
+    console.log('[runAuthFlow] /auth/validate呼び出し開始');
+    const validateResult = await this.callValidateApi(verifyResult.userId!);
+    
+    if (validateResult === 'success') {
+      console.log('[runAuthFlow] 全認証フロー完了: 成功');
+      this.cleanup();
+      return true;
+    } else if (validateResult === 'retry') {
+      // 401 or 5xx → リトライ
+      console.warn('[runAuthFlow] /auth/validate失敗（リトライ）');
+      return this.retryAuthFlow(() => this.runAuthFlow(entraJwt));
+    } else {
+      // sub検証失敗 or その他エラー
+      console.warn('[runAuthFlow] 認証フロー失敗');
+      this.cleanup();
+      return false;
+    }
+  }
+
+  /**
+   * リトライ実行
+   * 
+   * @param operation - 再実行する操作
+   * @returns 操作結果
+   */
+  private async retryAuthFlow(operation: () => Promise<boolean>): Promise<boolean> {
+    const retryKey = this.RETRY_KEY;
+    const retryCount = parseInt(sessionStorage.getItem(retryKey) || '0', 10);
+    
+    if (retryCount >= this.MAX_RETRY) {
+      console.error('[retryAuthFlow] リトライ上限到達');
+      this.cleanup();
+      return false;
+    }
+    
+    // リトライカウンター増分
+    sessionStorage.setItem(retryKey, String(retryCount + 1));
+    console.log('[retryAuthFlow] リトライ実行:', retryCount + 1, '/', this.MAX_RETRY);
+    
+    // 再実行
+    return operation();
+  }
+
+  /**
    * /auth/verify API呼び出し
    */
   private async callVerifyApi(entraJwt: string): Promise<{
     success: boolean;
     message?: string;
+    userId?: string;
   }> {
     try {
       // Authorization headerからトークンを取得するために observe: 'response' を使用
@@ -213,7 +244,10 @@ export class AuthService {
         }
         
         console.log('[callVerifyApi] /auth/verify成功');
-        return { success: true };
+        return { 
+          success: true,
+          userId: response.body.userId
+        };
       } else {
         // 失敗
         console.warn('[callVerifyApi] /auth/verify失敗:', response?.body?.message);
@@ -237,11 +271,12 @@ export class AuthService {
 
   /**
    * /auth/validate API呼び出し
+   * @param userId - ユーザーID（Entra sub）
    */
-  private async callValidateApi(): Promise<'success' | 'fail' | 'retry'> {
+  private async callValidateApi(userId: string): Promise<'success' | 'fail' | 'retry'> {
     try {
       const response = await firstValueFrom(
-        this.http.post<any>(`${environment.apiBaseUrl}/auth/validate`, {}, {
+        this.http.post<any>(`${environment.apiBaseUrl}/auth/validate`, { userId }, {
           withCredentials: true
         })
       );

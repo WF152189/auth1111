@@ -1,0 +1,8 @@
+{
+  "plantuml.render": "PlantUMLServer",
+  "plantuml.server": "https://www.plantuml.com/plantuml",
+  "java.compile.nullAnalysis.mode": "automatic",
+  "commentTranslate.targetLanguage": "ja",
+  "java.debug.settings.onBuildFailureProceed": true,
+  "java.configuration.updateBuildConfiguration": "automatic"
+}

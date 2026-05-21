@@ -37,6 +37,14 @@ export interface MsalRedirectRequest {
 }
 
 /**
+ * MSAL SilentRequest インターフェース
+ */
+export interface MsalSilentRequest {
+  scopes: string[];
+  account?: MsalAccountInfo;
+}
+
+/**
  * MSALサービスインターフェース
  * 
  * @azure/msal-browser の PublicClientApplication を使用
@@ -237,22 +245,49 @@ export class MsalService implements IMsalService {
 
   /**
    * サイレントトークン更新（必要に応じて使用）
+   * 
+   * @param request - サイレントリクエスト（スコープ指定）
+   * @returns Entra ID token（idToken）または null
    */
-  async acquireTokenSilent(): Promise<AuthenticationResult | null> {
-    const account = this.msalInstance.getActiveAccount();
-    if (!account) return null;
+  async acquireTokenSilent(request?: MsalSilentRequest): Promise<string | null> {
+    const msalAccount = request?.account 
+      ? this.mapToMsalAccount(request.account) 
+      : this.msalInstance.getActiveAccount();
+    
+    if (!msalAccount) {
+      console.warn('[acquireTokenSilent] アカウントが見つかりません');
+      return null;
+    }
 
     try {
       const silentRequest: SilentRequest = {
-        scopes: environment.scopes,
-        account: account
+        scopes: request?.scopes || environment.scopes,
+        account: msalAccount
       };
 
-      return await this.msalInstance.acquireTokenSilent(silentRequest);
+      const result = await this.msalInstance.acquireTokenSilent(silentRequest);
+      console.log('[acquireTokenSilent] サイレント更新成功');
+      return result.idToken;
     } catch (error) {
-      console.warn('Silent token acquisition failed:', error);
+      console.warn('[acquireTokenSilent] サイレント更新失敗:', error);
       return null;
     }
+  }
+
+  /**
+   * MsalAccountInfo を MSAL AccountInfo に変換
+   */
+  private mapToMsalAccount(account: MsalAccountInfo): any {
+    return {
+      homeAccountId: account.homeAccountId,
+      environment: account.environment,
+      tenantId: account.tenantId,
+      username: account.username,
+      name: account.name,
+      idToken: account.idToken,
+      idTokenClaims: account.idTokenClaims,
+      localAccountId: account.idTokenClaims?.oid || ''  // MSAL v5 に必要なフィールド
+    };
   }
 
   /**

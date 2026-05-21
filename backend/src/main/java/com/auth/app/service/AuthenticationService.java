@@ -11,9 +11,8 @@ import org.springframework.stereotype.Service;
  * 認証サービス
  * 
  * 責務:
- * 1. Entra ID JWT検証 → 業務JWT + RT発行
- * 2. RT更新 → 新規業務JWT + 新規RT発行
- * 3. ログアウト（RT無効化）
+ * 1. Entra ID JWT検証 → 業務JWT発行
+ * 2. ログアウト
  */
 @Service
 @RequiredArgsConstructor
@@ -21,18 +20,16 @@ import org.springframework.stereotype.Service;
 public class AuthenticationService {
 
     private final JwtService jwtService;
-    private final RefreshTokenService refreshTokenService;
     private final UserService userService;
     private final EntraIdJwtValidator entraIdJwtValidator;
 
     /**
-     * Entra JWT検証 → 業務JWT + RT発行
+     * Entra JWT検証 → 業務JWT発行
      * 
      * フロー:
      * 1. EntraIdJwtValidatorでEntra JWT検証（署名・iss・aud・exp）
      * 2. UserServiceでユーザー権限照会
      * 3. JwtServiceで業務JWT生成
-     * 4. RefreshTokenServiceでRT生成
      */
     public AuthResponse verifyAndIssueTokens(String entraJwt) {
         log.info("=== 認証フロー開始 ===");
@@ -72,51 +69,9 @@ public class AuthenticationService {
     }
 
     /**
-     * RT更新 → 新規業務JWT + 新規RT発行（RTローテーション）
-     * 
-     * フロー:
-     * 1. RefreshTokenServiceでRT検証・無効化
-     * 2. UserServiceで最新権限照会
-     * 3. JwtServiceで新規業務JWT生成
+     * ログアウト
      */
-    public AuthResponse refreshTokens(String oldRawRt) {
-        log.info("=== RT更新フロー開始 ===");
-        
-        // Step 1: RT検証・無効化
-        String userId = refreshTokenService.validateRefreshToken(oldRawRt);
-        log.info("RT検証成功: userId={}", userId);
-
-        // Step 2: 最新権限照会
-        UserPermissionInfo permInfo = userService.getUserPermissionInfo(userId);
-
-        // Step 3: 新規業務JWT生成
-        String newBusinessJwt = jwtService.generateToken(
-                permInfo.getUserId(),
-                permInfo.getEmail(),
-                permInfo.getDisplayName(),
-                permInfo.getRoles(),
-                permInfo.getPermissions()
-        );
-
-        log.info("業務JWT再発行完了: userId={}", userId);
-        log.info("=== RT更新フロー完了 ===");
-
-        return AuthResponse.builder()
-                .token(newBusinessJwt)
-                .userId(permInfo.getUserId())
-                .email(permInfo.getEmail())
-                .displayName(permInfo.getDisplayName())
-                .roles(permInfo.getRoles())
-                .permissions(permInfo.getPermissions())
-                .build();
-    }
-
-    /**
-     * ログアウト（RT無効化）
-     */
-    public void logout(String rawRt) {
-        log.info("ログアウト開始: RT無効化");
-        refreshTokenService.revokeToken(rawRt);
+    public void logout() {
         log.info("ログアウト完了");
     }
 }

@@ -71,16 +71,11 @@ export class CallbackComponent implements OnInit {
       console.log('[CallbackComponent] handleCallback結果:', success);
       
       if (success) {
-        // 保存されたURLがあればそこへ、なければダッシュボードへ
-        const redirectUrl = sessionStorage.getItem('redirect_url');
-        if (redirectUrl) {
-          sessionStorage.removeItem('redirect_url');
-          console.log('[CallbackComponent] リダイレクトURLへ遷移:', redirectUrl);
-          this.router.navigate([redirectUrl]);
-        } else {
-          console.log('[CallbackComponent] ダッシュボードへ遷移');
-          this.router.navigate(['/dashboard']);
-        }
+        // 認証成功 → 常にダッシュボードへ
+        // 注意: redirect_url は使用しない
+        // 理由: ページロードでAngularコンポーネントのデータが失われるため
+        console.log('[CallbackComponent] ダッシュボードへ遷移');
+        this.router.navigate(['/dashboard']);
       } else {
         // エラー理由を取得して表示
         this.errorReason = sessionStorage.getItem('auth_error_reason');

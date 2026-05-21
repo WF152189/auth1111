@@ -4,8 +4,6 @@ import com.auth.app.dto.StubTokenResponse;
 import com.auth.app.model.User;
 import com.auth.app.service.UserService;
 import com.auth.app.stub.StubEntraService;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -13,7 +11,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -24,8 +21,6 @@ public class StubEntraController {
 
     private final StubEntraService stubEntraService;
     private final UserService userService;
-
-    private static final String RT_COOKIE_NAME = "refresh_token";
 
     /**
      * GET /stub/entra/authorize
@@ -101,8 +96,7 @@ public class StubEntraController {
 
     /**
      * POST /stub/entra/token
-     * トークンエンドポイント模擬（認可コード → Entra JWT + リフレッシュトークン返却）
-     * リフレッシュトークンはHttpOnly Cookieに設定
+     * トークンエンドポイント模擬（認可コード → Entra JWT返却）
      */
     @PostMapping("/token")
     public ResponseEntity<StubTokenResponse> token(
@@ -110,25 +104,19 @@ public class StubEntraController {
             @RequestParam(name = "grant_type", required = false) String grantType,
             @RequestParam String code,
             @RequestParam(name = "redirect_uri", required = false) String redirectUri,
-            @RequestParam(name = "code_verifier", required = false) String codeVerifier,
-            HttpServletResponse response) {
+            @RequestParam(name = "code_verifier", required = false) String codeVerifier) {
 
-        // 認可コードを検証し、JWTとRTを取得
-        Map<String, String> tokens = stubEntraService.exchangeCodeForEntraJwt(code);
-        String entraJwt = tokens.get("entraJwt");
-        String refreshToken = tokens.get("refreshToken");
+        // 認可コードを検証し、JWTを取得
+        String entraJwt = stubEntraService.exchangeCodeForEntraJwt(code);
 
-        // トークンレスポンス構築（RTはレスポンスボディには含めず、Cookieのみ）
+        // トークンレスポンス構築
         StubTokenResponse tokenResponse = StubTokenResponse.builder()
                 .tokenType("Bearer")
                 .idToken(entraJwt)
                 .expiresIn(3600)
                 .build();
 
-        // RTをHttpOnly Cookieに設定
-        addRefreshTokenCookie(response, refreshToken);
-
-        log.info("スタブEntra JWT・RT発行完了（Cookie設定済み）");
+        log.info("スタブEntra JWT発行完了");
         return ResponseEntity.ok(tokenResponse);
     }
 
@@ -155,17 +143,5 @@ public class StubEntraController {
                     .replace(">", "&gt;")
                     .replace("\"", "&quot;")
                     .replace("'", "&#39;");
-    }
-
-    /**
-     * リフレッシュトークンをHttpOnly Cookieに設定
-     */
-    private void addRefreshTokenCookie(HttpServletResponse response, String refreshToken) {
-        Cookie cookie = new Cookie(RT_COOKIE_NAME, refreshToken);
-        cookie.setHttpOnly(true);
-        cookie.setPath("/auth");
-        cookie.setMaxAge(28800); // 8時間
-        // cookie.setSecure(true); // HTTPS環境で有効化
-        response.addCookie(cookie);
     }
 }
