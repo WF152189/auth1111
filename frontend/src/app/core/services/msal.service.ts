@@ -57,6 +57,13 @@ export interface IMsalService {
 }
 
 /**
+ * MSALサービスのInjectionToken
+ * 
+ * インターフェースはDIトークンとして使用できないため、InjectionTokenを定義
+ */
+export const MSAL_SERVICE = new InjectionToken<IMsalService>('MSAL_SERVICE');
+
+/**
  * MSALインスタンス生成ファクトリーのInjectionToken
  */
 export const MSAL_INSTANCE_FACTORY = new InjectionToken<MsalInstanceFactory>('MSAL_INSTANCE_FACTORY');

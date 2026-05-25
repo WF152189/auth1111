@@ -7,6 +7,7 @@ import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,6 +25,9 @@ import jakarta.servlet.http.HttpServletRequest;
 public class InternalAuthController {
 
     private final JwtService jwtService;
+    
+    @Value("${stub.enabled}")
+    private boolean stubEnabled;
 
     /**
      * POST /auth/validate
@@ -45,6 +49,19 @@ public class InternalAuthController {
             @RequestBody ValidationRequest request,
             HttpServletRequest httpRequest) {
         
+        // スタブモード: 検証成功としてレスポンスを返す
+        if (stubEnabled) {
+            log.info("[スタブ] sub検証成功としてレスポンスを返します: userId={}", request.getUserId());
+            
+            return ResponseEntity.ok(
+                ValidationResponse.builder()
+                    .success(true)
+                    .message("[スタブ] 検証成功")
+                    .build()
+            );
+        }
+        
+        // 本番モード: 通常の検証処理
         // Step 1: Authorization headerからJWTを取得
         String authHeader = httpRequest.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {

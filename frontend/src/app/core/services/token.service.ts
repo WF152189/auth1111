@@ -30,6 +30,7 @@ export class TokenService {
    * 業務JWTが有効かどうか（存在 かつ exp未超過）
    */
   isTokenValid(): boolean {
+    
     const token = this.getToken();
     if (!token) return false;
 

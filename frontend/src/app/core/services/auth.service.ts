@@ -2,7 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { TokenService } from './token.service';
-import { MsalService, MsalRedirectRequest } from './msal.service';
+import { MsalService, IMsalService, MSAL_SERVICE, MsalRedirectRequest } from './msal.service';
 import { environment } from '../../../environments/environment';
 import { firstValueFrom } from 'rxjs';
 
@@ -32,7 +32,7 @@ export type AuthErrorCode =
  */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  private msalService = inject(MsalService);
+  private msalService = inject(MSAL_SERVICE);
   private http = inject(HttpClient);
   private router = inject(Router);
   private tokenService = inject(TokenService);

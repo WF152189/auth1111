@@ -3,10 +3,12 @@ package com.auth.app.controller;
 import com.auth.app.dto.AuthResponse;
 import com.auth.app.exception.AuthException;
 import com.auth.app.service.AuthenticationService;
+import com.auth.app.service.JwtService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,6 +27,10 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthenticationService authenticationService;
+    private final JwtService jwtService;
+    
+    @Value("${stub.enabled}")
+    private boolean stubEnabled;
 
     /**
      * POST /auth/verify
@@ -39,7 +45,33 @@ public class AuthController {
             @RequestHeader("Authorization") String authHeader,
             HttpServletResponse response) {
 
-        // 例外処理は GlobalExceptionHandler に委譲
+        // スタブモード: 認証成功としてレスポンスを返す
+        if (stubEnabled) {
+            log.info("[スタブ] 認証成功としてレスポンスを返します");
+            
+            // ダミーの業務JWT生成（JWT形式で生成）
+            String dummyToken = jwtService.generateToken(
+                    "stub-user-12345",
+                    "testuser@example.com",
+                    "テストユーザー",
+                    java.util.List.of("USER"),
+                    java.util.List.of("read", "write")
+            );
+            
+            // レスポンスヘッダーに設定
+            response.addHeader("Authorization", "Bearer " + dummyToken);
+            
+            // スタブ用レスポンス
+            return ResponseEntity.ok(AuthResponse.success(
+                    "stub-user-12345",
+                    "testuser@example.com",
+                    "テストユーザー",
+                    java.util.List.of("USER"),
+                    java.util.List.of("read", "write")
+            ));
+        }
+
+        // 本番モード: 例外処理は GlobalExceptionHandler に委譲
         String entraJwt = extractBearerToken(authHeader);
         AuthResponse authResponse = authenticationService.verifyAndIssueTokens(entraJwt);
 

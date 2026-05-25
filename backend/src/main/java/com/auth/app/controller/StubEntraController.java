@@ -24,7 +24,7 @@ public class StubEntraController {
 
     /**
      * GET /stub/entra/authorize
-     * 認可エンドポイント模擬（ユーザー選択画面HTML返却）
+     * 認可エンドポイント模擬（Azure Entra ID風ユーザー選択画面）
      */
     @GetMapping(value = "/authorize", produces = MediaType.TEXT_HTML_VALUE)
     public String authorize(
@@ -38,37 +38,92 @@ public class StubEntraController {
         List<User> users = userService.getAllUsers();
 
         StringBuilder html = new StringBuilder();
-        html.append("<!DOCTYPE html><html><head><meta charset='UTF-8'>");
-        html.append("<title>Entra ID スタブ - ログイン</title>");
+        html.append("<!DOCTYPE html><html lang='ja'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>");
+        html.append("<title>アカウントにログイン</title>");
         html.append("<style>");
-        html.append("body{font-family:sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;margin:0;background:#f0f2f5;}");
-        html.append(".login-box{background:#fff;padding:40px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);width:400px;}");
-        html.append("h2{color:#0078d4;margin-bottom:20px;}");
-        html.append("select,button{width:100%;padding:12px;margin:8px 0;border-radius:4px;border:1px solid #ccc;font-size:16px;}");
-        html.append("button{background:#0078d4;color:#fff;border:none;cursor:pointer;}");
-        html.append("button:hover{background:#005a9e;}");
-        html.append(".info{color:#666;font-size:13px;margin-top:16px;}");
+        html.append("*{margin:0;padding:0;box-sizing:border-box;}");
+        html.append("body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:#f0f2f5;display:flex;justify-content:center;align-items:center;min-height:100vh;}");
+        html.append(".login-container{background:#fff;padding:44px;border-radius:2px;box-shadow:0 2px 6px rgba(0,0,0,0.1);width:440px;}");
+        html.append(".logo{margin-bottom:24px;}");
+        html.append(".logo svg{width:24px;height:24px;}");
+        html.append("h1{font-size:24px;font-weight:600;color:#1b1b1b;margin-bottom:8px;}");
+        html.append(".subtitle{color:#666;font-size:13px;margin-bottom:24px;}");
+        html.append(".user-list{list-style:none;margin-bottom:16px;}");
+        html.append(".user-item{display:flex;align-items:center;padding:12px;margin-bottom:8px;border:1px solid #e0e0e0;border-radius:2px;cursor:pointer;transition:background 0.2s;}");
+        html.append(".user-item:hover{background:#f5f5f5;border-color:#0078d4;}");
+        html.append(".user-avatar{width:36px;height:36px;border-radius:50%;background:#0078d4;color:#fff;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;margin-right:12px;}");
+        html.append(".user-info{flex:1;}");
+        html.append(".user-name{font-size:15px;color:#1b1b1b;font-weight:500;}");
+        html.append(".user-email{font-size:13px;color:#666;margin-top:2px;}");
+        html.append(".footer{margin-top:24px;padding-top:16px;border-top:1px solid #e0e0e0;text-align:center;}");
+        html.append(".footer-text{font-size:12px;color:#999;}");
+        html.append(".stub-notice{background:#fff3cd;border:1px solid #ffc107;border-radius:4px;padding:12px;margin-bottom:20px;font-size:12px;color:#856404;}");
         html.append("</style></head><body>");
-        html.append("<div class='login-box'>");
-        html.append("<h2>🔐 Entra ID スタブログイン</h2>");
-        html.append("<p>テストユーザーを選択してログインしてください</p>");
-        html.append("<form method='POST' action='/stub/entra/authorize/submit'>");
+        html.append("<div class='login-container'>");
+        
+        // Microsoftロゴ
+        html.append("<div class='logo'>");
+        html.append("<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'>");
+        html.append("<path fill='#f25022' d='M1 1h10v10H1z'/>");
+        html.append("<path fill='#00a4ef' d='M1 13h10v10H1z'/>");
+        html.append("<path fill='#7fba00' d='M13 1h10v10H13z'/>");
+        html.append("<path fill='#ffb900' d='M13 13h10v10H13z'/>");
+        html.append("</svg>");
+        html.append("</div>");
+        
+        html.append("<h1>アカウントにログイン</h1>");
+        html.append("<p class='subtitle'>テスト環境 - ユーザーを選択してください</p>");
+        
+        // スタブ_notice
+        html.append("<div class='stub-notice'>");
+        html.append("⚠️ これはEntra IDの認証画面をシミュレートするスタブ画面です");
+        html.append("</div>");
+        
+        // ユーザーリスト
+        html.append("<ul class='user-list'>");
+        
+        for (User user : users) {
+            String initial = user.getDisplayName() != null && !user.getDisplayName().isEmpty() 
+                ? user.getDisplayName().substring(0, 1).toUpperCase() 
+                : "U";
+            
+            // onclick属性の正しいエスケープ
+            html.append("<li class='user-item' onclick=\"selectUser('")
+                .append(escapeHtml(user.getUserId()))
+                .append("')\">");
+            html.append("<div class='user-avatar'>").append(initial).append("</div>");
+            html.append("<div class='user-info'>");
+            html.append("<div class='user-name'>").append(escapeHtml(user.getDisplayName())).append("</div>");
+            html.append("<div class='user-email'>").append(escapeHtml(user.getEmail())).append("</div>");
+            html.append("</div>");
+            html.append("</li>");
+        }
+        
+        html.append("</ul>");
+        
+        // 隠しフォーム
+        html.append("<form id='userForm' method='POST' action='/stub/entra/authorize/submit' style='display:none;'>");
+        html.append("<input type='hidden' name='user_id' id='userId'/>");
         html.append("<input type='hidden' name='redirect_uri' value='").append(escapeHtml(redirectUri)).append("'/>");
         html.append("<input type='hidden' name='state' value='").append(escapeHtml(state != null ? state : "")).append("'/>");
-        html.append("<select name='user_id' required>");
-
-        for (User user : users) {
-            html.append("<option value='").append(user.getUserId()).append("'>")
-                .append(escapeHtml(user.getDisplayName()))
-                .append(" (").append(escapeHtml(user.getEmail())).append(")")
-                .append("</option>");
-        }
-
-        html.append("</select>");
-        html.append("<button type='submit'>ログイン</button>");
         html.append("</form>");
-        html.append("<div class='info'>※ これはEntra IDの認証画面をシミュレートするスタブ画面です</div>");
-        html.append("</div></body></html>");
+        
+        // フッター
+        html.append("<div class='footer'>");
+        html.append("<p class='footer-text'> stub-enabled | 開発環境</p>");
+        html.append("</div>");
+        
+        html.append("</div>");
+        
+        // JavaScript
+        html.append("<script>");
+        html.append("function selectUser(userId) {");
+        html.append("  document.getElementById('userId').value = userId;");
+        html.append("  document.getElementById('userForm').submit();");
+        html.append("}");
+        html.append("</script>");
+        
+        html.append("</body></html>");
 
         return html.toString();
     }
