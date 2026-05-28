@@ -77,7 +77,10 @@ export class PermissionGuardT implements CanActivate, CanActivateChild {
     route: ActivatedRouteSnapshot,
     state: RouterStateSnapshot
   ): Promise<boolean> {
-    return this.checkPermission(route, state);
+    console.log('[PermissionGuard] canActivate 開始 - 時刻:', Date.now());
+    const result = await this.checkPermission(route, state);
+    console.log('[PermissionGuard] canActivate 完了 - 時刻:', Date.now(), '結果:', result);
+    return result;
   }
 
   /**

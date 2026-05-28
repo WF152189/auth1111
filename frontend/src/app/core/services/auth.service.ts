@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, Inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { TokenService } from './token.service';
@@ -43,7 +43,7 @@ export class AuthService {
   private readonly MAX_RETRY = 1;
 
   constructor(
-    msalService: IMsalService,
+    @Inject(MSAL_SERVICE) msalService: IMsalService,
     http: HttpClient,
     router: Router,
     tokenService: TokenService

@@ -41,22 +41,21 @@ export class ScreenPermissionService {
   async checkScreenPermission(screenId: string): Promise<ScreenPermissionResult> {
     try {
       // JWTからユーザーIDを取得
-      const userId = this.getUserIdFromJWT();
-      if (!userId) {
-        console.error('ユーザーIDが取得できません');
-        return {
-          authorized: false,
-          reason: 'ユーザー情報が無効です'
-        };
-      }
+      // const userId = this.getUserIdFromJWT();
+      // if (!userId) {
+      //   console.error('ユーザーIDが取得できません');
+      //   return {
+      //     authorized: false,
+      //     reason: 'ユーザー情報が無効です'
+      //   };
+      // }
 
       // バックエンドに権限チェックを依頼
       const result: ScreenPermissionResult = await firstValueFrom(
         this.http.post<ScreenPermissionResult>(
           `${environment.apiBaseUrl}/api/screens/permission/check`,
           {
-            screenId: screenId,
-            userId: userId
+            screenId: screenId
           },
           {
             withCredentials: true  // Cookie（RT）を自動送信

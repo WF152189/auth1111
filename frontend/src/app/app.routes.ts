@@ -1,6 +1,5 @@
 import { Routes } from '@angular/router';
-import { AuthGuard, AuthChildGuard } from './core/guards/auth.guard';
-import { permissionGuard, permissionChildGuard } from './core/guards/permission.guard';
+import { authAndPermissionGuard, authAndPermissionChildGuard } from './core/guards/auth-and-permission.guard';
 
 export const routes: Routes = [
   { path: '', redirectTo: '/login', pathMatch: 'full' },
@@ -15,29 +14,29 @@ export const routes: Routes = [
   {
     path: 'dashboard',
     loadComponent: () => import('./business/dashboard.component').then(m => m.DashboardComponent),
-    canActivate: [AuthGuard]
+    canActivate: [authAndPermissionGuard]
   },
   {
     path: 'menu',
     loadComponent: () => import('./business/menu.component').then(m => m.MenuComponent),
-    canActivate: [AuthGuard]
+    canActivate: [authAndPermissionGuard]
   },
   {
     path: 'business/data',
     loadComponent: () => import('./business/sample-data.component').then(m => m.SampleDataComponent),
-    canActivate: [AuthGuard, permissionGuard],
+    canActivate: [authAndPermissionGuard],
     data: { screenId: 'BUSINESS_DATA_SCREEN' }
   },
   {
     path: 'admin/management',
     loadComponent: () => import('./business/admin-management.component').then(m => m.AdminManagementComponent),
-    canActivate: [AuthGuard, permissionGuard],
+    canActivate: [authAndPermissionGuard],
     data: { screenId: 'ADMIN_MANAGEMENT_SCREEN' }
   },
   {
     path: 'settings',
     loadComponent: () => import('./business/settings/settings.component').then(m => m.SettingsComponent),
-    canActivateChild: [AuthChildGuard, permissionChildGuard],
+    canActivateChild: [authAndPermissionChildGuard],
     data: { screenId: 'SETTINGS_SCREEN' }
   },
   {

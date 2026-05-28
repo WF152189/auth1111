@@ -1,7 +1,7 @@
 import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { catchError, switchMap, throwError, Observable } from 'rxjs';
+import { catchError, switchMap, throwError, Observable, EMPTY } from 'rxjs';
 import { TokenService } from '../services/token.service';
 import { TokenRefreshService } from '../services/token-refresh.service';
 
@@ -46,8 +46,11 @@ export const errorInterceptor: HttpInterceptorFn = (req, next): Observable<any> 
         // 権限エラー → forbidden ページ
         console.warn('[errorInterceptor] 403エラー: 権限なし');
         router.navigate(['/error/forbidden']);
+        // エラーを送出せず、EMPTY を返す
+        return EMPTY;
       }
 
+      // その他のエラーはそのまま伝播
       return throwError(() => error);
     })
   );
@@ -72,9 +75,10 @@ function handle401Error(
     switchMap((newToken: string | null) => {
       if (!newToken) {
         // 更新失敗 → ログインページへ
-        console.warn('[errorInterceptor] サイレント更新失敗');
+        console.warn('[errorInterceptor] サイレント更新失敗、ログインページへリダイレクト');
         redirectToLogin(router);
-        return throwError(() => new Error('Token refresh failed'));
+        // エラーを送出せず、EMPTY を返す（コンポーネントへのエラー伝播を防止）
+        return EMPTY;
       }
 
       // 新JWTでリクエスト再試行

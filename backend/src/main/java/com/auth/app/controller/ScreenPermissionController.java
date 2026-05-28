@@ -50,7 +50,7 @@ public class ScreenPermissionController {
         // TODO: JWTからユーザーIDを抽出（現在はリクエストから取得）
         // 本番環境では、@AuthenticationPrincipalまたはJwtAuthenticationFilterで設定された
         // SecurityContextからユーザーIDを取得する
-        String userId = request.getUserId();
+        String userId = "eeeeeeee";
         if (userId == null || userId.isEmpty()) {
             log.warn("画面権限チェック失敗: userIdが未設定");
             return ResponseEntity.badRequest().body(

@@ -79,7 +79,10 @@ export class AuthGuardT implements CanActivate, CanActivateChild {
     route: ActivatedRouteSnapshot,
     state: RouterStateSnapshot
   ): Promise<boolean> {
-    return this.checkAuth(state);
+    console.log('[AuthGuard] canActivate 開始 - 時刻:', Date.now());
+    const result = await this.checkAuth(state);
+    console.log('[AuthGuard] canActivate 完了 - 時刻:', Date.now(), '結果:', result);
+    return result;
   }
 
   /**
@@ -142,7 +145,7 @@ export class AuthGuardT implements CanActivate, CanActivateChild {
     }
 
     // サイレント更新失敗 → ログインページへリダイレクト
-    console.warn('[AuthGuard] 認証失敗、ログインページへリダイレクト');
+    console.warn('[AuthGuard] 認証失敗、ログインページへリダイレクト完了時刻:', Date.now());
     
     // 注意: ログイン成功後も元のURLには戻らない
     // 理由: ページロードでAngularコンポーネントのデータが失われるため
